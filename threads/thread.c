@@ -19,6 +19,12 @@
 #define THREAD_BASIC 0xd42df210
 static struct list ready_list;
 
+/// 1-1
+// sleep된 스레드의 리스트 sleep_list
+// sleep_list의 스레드의 기상시간 중 가장 빠른 다음 기상시간 next_awaketick
+static struct list sleep_list;
+static int64_t next_awaketick;
+
 static struct thread *idle_thread;
 static struct thread *initial_thread;
 
@@ -34,6 +40,7 @@ static long long user_ticks;
 static unsigned thread_ticks;
 
 bool thread_mlfqs;
+
 
 static void kernel_thread (thread_func *, void *aux);
 
@@ -57,9 +64,12 @@ thread_init (void) {
 		.address = (uint64_t) gdt
 	};
 	lgdt (&gdt_ds);
+
 	lock_init (&tid_lock);
 	list_init (&ready_list);
 	list_init (&destruction_req);
+	list_init (&sleep_list);
+
 	initial_thread = running_thread ();
 	init_thread (initial_thread, "main", PRI_DEFAULT);
 	initial_thread->status = THREAD_RUNNING;
@@ -190,6 +200,63 @@ thread_yield (void) {
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
+
+/// 1-1
+// 기능 1 : next_awaketick을 리턴
+int64_t threads_awaketime(void)
+{
+	return next_awaketick;
+}
+
+/// 1-1
+// 기능 1 : sleep_list에서 curr_tick에 일어나야 할 모든 스레드를 unblock
+// 기능 2 : next_awaketick를 sleep_list의 스레드들의 awaketick 중 최솟값으로 갱신
+void threads_awake(int64_t curr_tick)
+{
+	next_awaketick = INT64_MAX;
+	// sleep_list의 처음부터 끝까지 탐색하며 기상시간이 된 스레드들을 unblock한다
+	struct list_elem *searchP;
+	searchP = list_begin(&sleep_list);
+	while (searchP != list_tail(&sleep_list))
+	{
+		struct thread *search_thread = list_entry(searchP, struct thread, elem);
+		if (search_thread->awaketick <= curr_tick)
+		{
+			searchP = list_remove(&search_thread->elem);
+			thread_unblock(search_thread);
+		}
+		else
+		{
+			searchP = list_next(searchP);
+			// next_awaketick 갱신
+			if (search_thread->awaketick < next_awaketick)
+			{
+				next_awaketick = search_thread->awaketick;
+			}
+		}
+	}
+}
+
+/// 1-1
+// 기능 1 : thread_current()의 awaketick을 ticks로 갱신, sleep_list에 추가, block
+// 기능 2 : next_awaketick이 ticks보다 늦다면 ticks로 갱신
+void thread_sleep(int64_t ticks)
+{
+	struct thread *curr = thread_current();
+	enum intr_level old_level;
+	old_level = intr_disable();
+	ASSERT(curr != idle_thread);
+	curr->awaketick = ticks;
+	// next_awaketick 갱신
+	if (curr->awaketick < next_awaketick)
+	{
+		next_awaketick = curr->awaketick;
+	}
+	list_push_back(&sleep_list, &curr->elem);
+	thread_block();
+	intr_set_level(old_level);
+}
+
 
 void
 thread_set_priority (int new_priority) {

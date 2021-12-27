@@ -71,8 +71,9 @@ timer_elapsed (int64_t then) {
 void
 timer_sleep (int64_t ticks) {
 	int64_t start = timer_ticks ();
-
 	ASSERT (intr_get_level () == INTR_ON);
+	/// 1-1
+	// 스레드를 시간 start + ticks까지 sleep한다
 	thread_sleep(start + ticks);
 }
 
@@ -100,10 +101,12 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 	thread_tick();
-	// 기상시간을 취하는 함수 thread_awaketime()의 리턴값보다 ticks가 클 경우 스레드를 awake한다
-	if (ticks >= thread_awaketime())
+	/// 1-1
+	// ticks가 sleep_list의 스레드를 깨워야 할 threads_awaketime()에 도달하면
+	if (ticks >= threads_awaketime())
 	{
-		thread_awake(ticks);
+		// ticks에 awake해야 할 모든 스레드를 깨운다
+		threads_awake(ticks);
 	}
 }
 
