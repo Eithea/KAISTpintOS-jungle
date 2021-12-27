@@ -131,6 +131,13 @@ thread_create (const char *name, int priority,
 	t->tf.eflags = FLAG_IF;
 
 	thread_unblock (t);
+	// priority에 따라 ready_list의 어느 위치에 들어간 t가 thread_current보다도 우선순위가 높다면 front에 있을 것이다
+	// 이때 thread_current는 자기보다 우선순위가 높은 t에게 yield한다
+	if (!intr_context() && !list_empty (&ready_list)
+		&& thread_current()->priority < list_entry(list_front(&ready_list), struct thread, elem)->priority)
+	{
+		thread_yield();
+	}
 
 	return tid;
 }
@@ -151,7 +158,7 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
+	list_insert_ordered(&ready_list, &t->elem, CMP_priority, 0);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
 }
@@ -196,7 +203,10 @@ thread_yield (void) {
 
 	old_level = intr_disable ();
 	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+		//list_push_back (&ready_list, &curr->elem);
+		/// 1-2
+		// CMP_priority의 결과에 따라 curr을 ready_list의 정렬된 위치에 삽입
+		list_insert_ordered(&ready_list, &curr->elem, CMP_priority, 0);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
@@ -257,10 +267,25 @@ void thread_sleep(int64_t ticks)
 	intr_set_level(old_level);
 }
 
+/// 1-2
+// a와 b의 우선순위를 비교해서 True False를 return하는 함수
+// 이 함수를 이용해 리스트에 삽입시 이전 원소와 연속적으로 비교하여 우선순위에 맞는 사리에 배치된다
+bool CMP_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+	return list_entry (a, struct thread, elem)->priority > list_entry (b, struct thread, elem)->priority;
+}
 
-void
-thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+void thread_set_priority (int new_priority)
+{
+	struct thread *curr = thread_current();
+	curr->priority = new_priority;
+	/// 1-2
+	// priority가 갱신된 curr은 priority에 따라 yield해야 할 수도 있다
+	// 이를 확인하여 필요하다면 우선순위가 높은 스레드에게 yield
+	if (!intr_context() && !list_empty (&ready_list)
+		&& curr->priority < list_entry(list_front(&ready_list), struct thread, elem)->priority)
+	{
+		thread_yield();
+	}
 }
 
 int
