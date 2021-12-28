@@ -131,14 +131,10 @@ thread_create (const char *name, int priority,
 	t->tf.eflags = FLAG_IF;
 
 	thread_unblock (t);
+	/// 1-2
 	// priority에 따라 ready_list의 어느 위치에 들어간 t가 thread_current보다도 우선순위가 높다면 front에 있을 것이다
 	// 이때 thread_current는 자기보다 우선순위가 높은 t에게 yield한다
-	if (!intr_context() && !list_empty (&ready_list)
-		&& thread_current()->priority < list_entry(list_front(&ready_list), struct thread, elem)->priority)
-	{
-		thread_yield();
-	}
-
+	check_priority_to_yield();
 	return tid;
 }
 
@@ -274,18 +270,27 @@ bool CMP_priority (const struct list_elem *a, const struct list_elem *b, void *a
 	return list_entry (a, struct thread, elem)->priority > list_entry (b, struct thread, elem)->priority;
 }
 
-void thread_set_priority (int new_priority)
+/// 1-2
+// priority가 갱신된 curr priority에 따라 yield해야 할 수도 있다
+// 이를 확인하여 필요하다면 우선순위가 높은 스레드에게 yield
+void check_priority_to_yield(void)
 {
 	struct thread *curr = thread_current();
-	curr->priority = new_priority;
-	/// 1-2
-	// priority가 갱신된 curr은 priority에 따라 yield해야 할 수도 있다
-	// 이를 확인하여 필요하다면 우선순위가 높은 스레드에게 yield
 	if (!intr_context() && !list_empty (&ready_list)
 		&& curr->priority < list_entry(list_front(&ready_list), struct thread, elem)->priority)
 	{
 		thread_yield();
 	}
+}
+
+void thread_set_priority (int new_priority)
+{
+	struct thread *curr = thread_current();
+	curr->priority = new_priority;
+	/// 1-2
+	// priority가 갱신된 curr priority에 따라 yield해야 할 수도 있다
+	// 이를 확인하여 필요하다면 우선순위가 높은 스레드에게 yield
+	check_priority_to_yield();
 }
 
 int
