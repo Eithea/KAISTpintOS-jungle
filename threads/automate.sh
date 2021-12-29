@@ -3,25 +3,25 @@
 # 돌리고 싶은 테스트의 경우 주석 처리를 해제하세요.
 
 declare -a tests=(
-    # "alarm-single" 
-    # "alarm-multiple"
-    # "alarm-simultaneous"
-    # "alarm-zero"
-    # "alarm-negative"
-     "alarm-priority"
+    "alarm-single" 
+    "alarm-multiple"
+    "alarm-simultaneous"
+    "alarm-zero"
+    "alarm-negative"
+    "alarm-priority"
 
-     "priority-fifo"
-     "priority-preempt"
-    # "priority-change"
-    # "priority-donate-one"
-    # "priority-donate-multiple"
-    # "priority-donate-multiple2"
-    # "priority-donate-nest"
-    # "priority-donate-sema"
-    # "priority-donate-lower"
-    # "priority-donate-chain"
-     "priority-sema"
-     "priority-condvar"
+    "priority-fifo"
+    "priority-preempt"
+    "priority-change"
+    "priority-donate-one"
+    "priority-donate-multiple"
+    "priority-donate-multiple2"
+    "priority-donate-nest"
+    "priority-donate-sema"
+    "priority-donate-lower"
+    "priority-donate-chain"
+    "priority-sema"
+    "priority-condvar"
     
     # "mlfqs-load-1"
     # "mlfqs-load-60"
@@ -35,14 +35,13 @@ declare -a tests=(
 )
 
 make clean
-source activate
-cd threads
+source ../activate
 make
 cd build
 
 directory="tests/threads/"
 suffix=".result"
-VB=1 # 이 값을 1로 하면 테스트 결과와 더불어 테스트 중간에 찍히는 출력값도 볼 수 있습니다.
+VB=0 # 이 값을 1로 하면 테스트 결과와 더불어 테스트 중간에 찍히는 출력값도 볼 수 있습니다.
 
 for test in "${tests[@]}"; do
     echo "----------------------------------------------------------"

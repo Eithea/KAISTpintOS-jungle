@@ -120,6 +120,8 @@ sema_up (struct semaphore *sema) {
 		thread_unblock (list_entry (list_pop_front (&sema->waiters), struct thread, elem));
 	}
 	sema->value++;
+	/// 1-2
+	// unblock으로 새 스레드가 추가되었으니 정렬만 하는 것이 아니라 yield의 여부도 체크해야 한다
 	check_priority_to_yield();
 	intr_set_level (old_level);
 }
@@ -196,8 +198,21 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
 
+	/// 1-3
+	// lock을 선점한 스레드가 있다면 priority를 양도한다
+	// 멀티도네시에도 장부(?)를 뒤져 역연산을 할수 있도록 양도과정은 스레드의 각 필드에 저장
+	struct thread *curr = thread_current();
+	if (lock->holder)
+	{		
+		curr->lock_wait = lock;
+		list_insert_ordered (&lock->holder->donation_list, &curr->donation_elem, CMPdona_priority, 0);
+		donate_priority();
+	}
+	// lock 점유시 wait은 원래대로 되돌린다
 	sema_down (&lock->semaphore);
-	lock->holder = thread_current ();
+	curr->lock_wait = NULL;
+
+	lock->holder = curr;
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -229,10 +244,31 @@ void
 lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
-
+	/// 1-3
+	// lock을 반환시 lock을 기다리던 스레드들로부터 받은 priority는 날려야 한다
+	// lock때문에 priority를 제공했던 스레드들은 역할을 다했으니 remove_with_lock(lock)을 사용하여 donation_list에서 제거하고
+	// refresh_priority()를 사용하여 priority를 lock의 영향을 받기 전으로 되돌린다
+	remove_with_lock(lock);
+	refresh_priority();
 	lock->holder = NULL;
 	sema_up (&lock->semaphore);
 }
+
+/// 1-3
+// donation_list를 순회하며 lock때문에 priority를 제공했던 스레드들을 제거
+void remove_with_lock (struct lock *lock)
+{
+	struct thread *curr = thread_current();
+	struct list_elem *e = list_begin(&curr->donation_list);
+	for (; e != list_end(&curr->donation_list); e = list_next(e))
+	{
+		struct thread *thread_search = list_entry(e, struct thread, donation_elem);
+		if (thread_search->lock_wait == lock) {
+			list_remove(&thread_search->donation_elem);
+		}
+	}
+}
+
 
 /* Returns true if the current thread holds LOCK, false
    otherwise.  (Note that testing whether some other thread holds
@@ -342,14 +378,14 @@ cond_broadcast (struct condition *cond, struct lock *lock) {
 
 /// 1-2
 // CMP_priority와 마찬가지로 priority에 따라 TF return
-bool CMPsem_priority(const struct list_elem *l, const struct list_elem *s, void *aux UNUSED)
+bool CMPsem_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
 {
-	struct semaphore_elem *l_sema = list_entry (l, struct semaphore_elem, elem);
-	struct semaphore_elem *s_sema = list_entry (s, struct semaphore_elem, elem);
+	struct semaphore_elem *Sa = list_entry (a, struct semaphore_elem, elem);
+	struct semaphore_elem *Sb = list_entry (b, struct semaphore_elem, elem);
 
-	struct list *waiter_l_sema = &(l_sema->semaphore.waiters);
-	struct list *waiter_s_sema = &(s_sema->semaphore.waiters);
+	struct list *waiter_Sa = &(Sa->semaphore.waiters);
+	struct list *waiter_Sb = &(Sb->semaphore.waiters);
 
-	return list_entry (list_begin (waiter_l_sema), struct thread, elem)->priority
-		 > list_entry (list_begin (waiter_s_sema), struct thread, elem)->priority;
+	return list_entry (list_begin (waiter_Sa), struct thread, elem)->priority
+		 > list_entry (list_begin (waiter_Sb), struct thread, elem)->priority;
 }

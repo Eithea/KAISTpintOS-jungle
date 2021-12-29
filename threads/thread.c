@@ -266,8 +266,16 @@ void thread_sleep(int64_t ticks)
 /// 1-2
 // a와 b의 우선순위를 비교해서 True False를 return하는 함수
 // 이 함수를 이용해 리스트에 삽입시 이전 원소와 연속적으로 비교하여 우선순위에 맞는 사리에 배치된다
-bool CMP_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+bool CMP_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
 	return list_entry (a, struct thread, elem)->priority > list_entry (b, struct thread, elem)->priority;
+}
+
+/// 1-3
+// CMP_priority와 같은 기능을 donation_elem으로부터 수행하는 함수
+bool CMPdona_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+	return list_entry (a, struct thread, donation_elem) -> priority > list_entry (b, struct thread, donation_elem)-> priority;
 }
 
 /// 1-2
@@ -286,11 +294,59 @@ void check_priority_to_yield(void)
 void thread_set_priority (int new_priority)
 {
 	struct thread *curr = thread_current();
-	curr->priority = new_priority;
+	//curr->priority = new_priority;
+	/// 1-3
+	// 새로 set하는 변수는 도네이션에 의해 변화하는 priority가 아닌 priority_initial이어야 한다
+	// priority_initial이 바뀜에 따라 priority는 바뀔 수도 있고 아닐 수도 있으며, 이는 refresh_priority()에서 판단
+	curr->priority_initial = new_priority;
+	refresh_priority();
 	/// 1-2
 	// priority가 갱신된 curr priority에 따라 yield해야 할 수도 있다
 	// 이를 확인하여 필요하다면 우선순위가 높은 스레드에게 yield
 	check_priority_to_yield();
+}
+
+/// 1-3
+// lock_wait이 있는 스레드들에 대해 priority를 양도 (기존 priority가 더 낮았던 경우만)
+// lock_wait->holder->lock_wait->holder을 반복하며 스레드의 대기열 chain을 타고 올라가며
+// curr의 대기에 연관된 모든 스레드가 curr 이상의 priority를 가져 우선적으로 처리되도록
+// 최대 nested_depth에 도달할 때까지 priority를 부여
+#define nested_depth 8
+void donate_priority(void)
+{
+	struct thread *curr = thread_current();
+	struct thread *holder;
+	int depth = 0;
+	while((depth < nested_depth) && (curr->lock_wait))
+	{
+
+		holder = curr->lock_wait->holder;
+		if (holder->priority < curr->priority)
+		{
+			holder->priority = curr->priority;
+		}
+		curr = holder;
+		depth = depth + 1;
+	}
+}
+
+/// 1-3
+// donation_list에서 삭제된 스레드가 제공한 priority가 최댓값이었을 경우 이의 영향을 제거한 새 priority를 부여한다
+// priority_initial의 값이 변경된 경우에도 새 값에 대해 donation_list가 제공한 기존 값과의 비교로 priority를 결정
+void refresh_priority(void)
+{
+	// priority_initial로 초기화 후 donation_list로부터 제공받은 값들과 비교하여 최종 priority 결정
+	struct thread *curr = thread_current();
+	curr->priority = curr->priority_initial;
+	if (!list_empty(&curr->donation_list))
+	{
+		list_sort(&curr->donation_list, CMPdona_priority, 0); 
+		struct thread *front = list_entry(list_front(&curr->donation_list), struct thread, donation_elem);
+		if (front->priority > curr->priority)
+		{
+			curr->priority = front->priority;
+		}
+	}
 }
 
 int
@@ -352,6 +408,11 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
 	t->magic = THREAD_MAGIC;
+
+	/// 1-3
+	t->lock_wait = NULL;	       
+	list_init(&t->donation_list);
+	t->priority_initial = priority;
 }
 
 static struct thread *
