@@ -193,15 +193,25 @@ lock_init (struct lock *lock) {
    interrupts disabled, but interrupts will be turned back on if
    we need to sleep. */
 void
-lock_acquire (struct lock *lock) {
+lock_acquire (struct lock *lock)
+{
 	ASSERT (lock != NULL);
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
 
+	/// 1-4
+	// thread_mlfqs 옵션을 켰을 경우 도네이션하지 않음
+	struct thread *curr = thread_current();
+	if (thread_mlfqs)
+	{
+		sema_down(&lock->semaphore);
+		lock->holder = curr;
+		return;
+	}
+
 	/// 1-3
 	// lock을 선점한 스레드가 있다면 priority를 양도한다
 	// 멀티도네시에도 장부(?)를 뒤져 역연산을 할수 있도록 양도과정은 스레드의 각 필드에 저장
-	struct thread *curr = thread_current();
 	if (lock->holder)
 	{		
 		curr->lock_wait = lock;
@@ -244,6 +254,13 @@ void
 lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
+
+	if (thread_mlfqs)
+	{
+		lock->holder = NULL;
+		sema_up(&lock->semaphore);
+		return;
+  	}
 	/// 1-3
 	// lock을 반환시 lock을 기다리던 스레드들로부터 받은 priority는 날려야 한다
 	// lock때문에 priority를 제공했던 스레드들은 역할을 다했으니 remove_with_lock(lock)을 사용하여 donation_list에서 제거하고

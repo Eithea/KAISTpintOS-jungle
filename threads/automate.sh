@@ -23,15 +23,15 @@ declare -a tests=(
     "priority-sema"
     "priority-condvar"
     
-    # "mlfqs-load-1"
-    # "mlfqs-load-60"
-    # "mlfqs-load-avg"
-    # "mlfqs-recent-1"
-    # "mlfqs-fair-2"
-    # "mlfqs-fair-20"
-    # "mlfqs-nice-2"
-    # "mlfqs-nice-10"
-    # "mlfqs-block"
+    "mlfqs-load-1"
+    "mlfqs-load-60"
+    "mlfqs-load-avg"
+    "mlfqs-recent-1"
+    "mlfqs-fair-2"
+    "mlfqs-fair-20"
+    "mlfqs-nice-2"
+    "mlfqs-nice-10"
+    "mlfqs-block"
 )
 
 make clean

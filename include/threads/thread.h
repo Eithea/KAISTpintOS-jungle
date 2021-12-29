@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "threads/interrupt.h"
 #include "threads/synch.h"
+
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -116,6 +117,11 @@ struct thread {
 	struct list donation_list; // priority를 제공한 스레드들의 리스트. lock 해제시 priority를 되돌리기 위해 기록
 	struct list_elem donation_elem; // 타 구조체의 donation_list에 들어가 list lib을 쓰기 위한 elem 구조체
 	int priority_initial; // 도네이션에 의해 갱신되지 않는 고윳값 보관
+
+	/// 1-4
+	int nice;
+  	int recent_cpu;
+
 };
 
 /* If false (default), use round-robin scheduler.
@@ -163,6 +169,15 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+/// 1-4
+void mlfqs_priority(struct thread *thread_target);
+void mlfqs_recent_cpu(struct thread *thread_target);
+void mlfqs_load_avg(void);
+void mlfqs_recalculate_priority();
+void mlfqs_recalculate_recent_cpu();
+void mlfqs_increment(void);
+void mlfqs_recalculate(int ticks, int freq);
 
 void do_iret (struct intr_frame *tf);
 

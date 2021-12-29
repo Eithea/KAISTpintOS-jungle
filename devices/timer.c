@@ -101,6 +101,13 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 	thread_tick();
+	/// 1-4
+	// thread_mlfqs 옵션을 켰을 경우 mlfqs 연관 factor들 갱신
+	if (thread_mlfqs)
+	{
+		mlfqs_recalculate(ticks, TIMER_FREQ);
+	}
+
 	/// 1-1
 	// ticks가 sleep_list의 스레드를 깨워야 할 threads_awaketime()에 도달하면
 	if (ticks >= threads_awaketime())
