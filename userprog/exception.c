@@ -5,6 +5,8 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "intrinsic.h"
+/// 2-3
+#include "userprog/syscall.h"
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -139,6 +141,13 @@ page_fault (struct intr_frame *f) {
 	not_present = (f->error_code & PF_P) == 0;
 	write = (f->error_code & PF_W) != 0;
 	user = (f->error_code & PF_U) != 0;
+	/// 2-3
+	// bad case에 대해 eixt(-1)
+	// 테스트케이스가 요구하니 구현은 하는데 이후 영향을 안미치도록 일단 #ifdef를 쓰자
+#ifdef USERPROG
+	exit(-1);
+#endif
+	
 
 #ifdef VM
 	/* For project 3 and later. */

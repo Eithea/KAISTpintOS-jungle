@@ -122,7 +122,10 @@ sema_up (struct semaphore *sema) {
 	sema->value++;
 	/// 1-2
 	// unblock으로 새 스레드가 추가되었으니 정렬만 하는 것이 아니라 yield의 여부도 체크해야 한다
-	check_priority_to_yield();
+	if(!intr_context())
+	{
+		check_priority_to_yield();
+	}
 	intr_set_level (old_level);
 }
 

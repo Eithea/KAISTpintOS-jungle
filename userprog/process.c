@@ -49,8 +49,13 @@ process_create_initd (const char *file_name) {
 	if (fn_copy == NULL)
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
-
 	/* Create a new thread to execute FILE_NAME. */
+	/// 2-1
+	// thread.name을 argv[0]로 하기 위해 file_name을 첫 ' '에서 컷
+	char *save_ptr;
+	strtok_r(file_name, " ", &save_ptr);
+	// initd를 수행하는 thread를 create하는데, file_name은 이미 스레드 name을 만들기 위해 cut당한 상태이다
+	// argv 파싱을 위해 cut되지 않은 fn_copy를 initd의 인자로 주어 initd가 process_exec 안에서 파싱 수행
 	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
@@ -76,8 +81,20 @@ initd (void *f_name) {
 tid_t
 process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	/* Clone current thread to new thread.*/
-	return thread_create (name,
-			PRI_DEFAULT, __do_fork, thread_current ());
+	// return thread_create (name, PRI_DEFAULT, __do_fork, thread_current ());
+	struct thread *curr = thread_current();
+	/// 2-3 Hierarchical Process Structure
+	// fork가 실행된 순간의 register를 카피해서 curr 자신의 필드에 보관
+	memcpy(&curr->parent_if, if_, sizeof(struct intr_frame));
+	tid_t child_tid = thread_create(name, PRI_DEFAULT, __do_fork, curr);
+	if (child_tid == TID_ERROR)
+		return TID_ERROR;
+	struct thread *child = get_child_process(child_tid);
+	// 값이 0인 fork_sema를 요구함으로써 child의 __do_fork가 끝날 때까지 대기
+	sema_down(&child->fork_sema);
+	if (child->exit_status == -1)
+		return TID_ERROR;
+	return child_tid;
 }
 
 #ifndef VM
@@ -92,21 +109,45 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	bool writable;
 
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
+	// va가 커널 영역인 경우 return True
+	if (is_kernel_vaddr(va))
+	{ 
+		return true;
+	}
 
 	/* 2. Resolve VA from the parent's page map level 4. */
-	parent_page = pml4_get_page (parent->pml4, va);
+	// pml4로부터 page get, 실패시 return False
+	parent_page = pml4_get_page(parent->pml4, va);
+	if (parent_page == NULL)
+	{
+		return false;
+	}
 
 	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
 	 *    TODO: NEWPAGE. */
+	// 복제할 새 페이지 할당, 실패시 return False
+	newpage = palloc_get_page(PAL_USER);
+	if (newpage == NULL)
+	{
+		return false;
+	}
 
 	/* 4. TODO: Duplicate parent's page to the new page and
 	 *    TODO: check whether parent's page is writable or not (set WRITABLE
 	 *    TODO: according to the result). */
+	// 복제
+	memcpy(newpage, parent_page, PGSIZE);
+	writable = is_writable(pte);
 
 	/* 5. Add new page to child's page table at address VA with WRITABLE
 	 *    permission. */
-	if (!pml4_set_page (current->pml4, va, newpage, writable)) {
+	// curr.plm4에 복제한 newpage 매핑
+	if (!pml4_set_page (current->pml4, va, newpage, writable))
+	{
 		/* 6. TODO: if fail to insert page, do error handling. */
+		// 정상적으로 set된 page는 종료시 free 절차를 거치지만 실패시 그렇지 못하므로 여기서 free
+		palloc_free_page(newpage);
+		return false;
 	}
 	return true;
 }
@@ -126,7 +167,12 @@ __do_fork (void *aux) {
 	bool succ = true;
 
 	/* 1. Read the cpu context to local stack. */
+	/// 2-3 File Descriptor
+	// process_fork에서 기록해둔 register를 불러와 if에 카피
+	parent_if = &parent->parent_if;	
 	memcpy (&if_, parent_if, sizeof (struct intr_frame));
+	// return(rax)은 0
+	if_.R.rax = 0; 
 
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
@@ -149,22 +195,49 @@ __do_fork (void *aux) {
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
 
+	/// 2-3 File Descriptor
+	// parent의 fd table, range, next order, stdin, stdout를 복사
+	if (parent->next_fd == FD_MAX)
+	{
+		goto error;
+	}
+	current->next_fd = parent->next_fd;	
+	current->rangeof_fd = parent->rangeof_fd;
+	current->fdtable[0] = parent->fdtable[0];
+	current->fdtable[1] = parent->fdtable[1];
+
+	struct file *file_copy;
+	int i = 2;
+	while (i <= current->rangeof_fd)
+	{
+		file_copy = parent->fdtable[i];
+		if (file_copy != NULL)
+		{
+			current->fdtable[i] = (struct file*) file_duplicate(file_copy);
+		}
+		i = i + 1;
+	}
 	process_init ();
+	// 카피 완료 후 process_fork에서 대기중인 parent에게 sema 전달
+	sema_up(&current->fork_sema);
 
 	/* Finally, switch to the newly created process. */
 	if (succ)
 		do_iret (&if_);
 error:
-	thread_exit ();
+	current->exit_status = TID_ERROR;
+	// error로 진입해도 대기중인 parent에게 sema 전달
+	sema_up(&current->fork_sema);
+	// thread_exit (); 
 }
 
 /* Switch the current execution context to the f_name.
  * Returns -1 on fail. */
-int
-process_exec (void *f_name) {
+
+int process_exec (void *f_name)
+{
 	char *file_name = f_name;
 	bool success;
-
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
 	 * it stores the execution information to the member. */
@@ -190,6 +263,7 @@ process_exec (void *f_name) {
 }
 
 
+
 /* Waits for thread TID to die and returns its exit status.  If
  * it was terminated by the kernel (i.e. killed due to an
  * exception), returns -1.  If TID is invalid or if it was not a
@@ -204,7 +278,44 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-	return -1;
+
+	/// 2-3 Hierarchical Process Structure
+	// child가 exit()할때까지 대기
+	// child가 없거나 이미 wait()을 실행했는데 또 실행된 경우 error
+	struct thread *child;
+	child = get_child_process(child_tid);
+	if (child == NULL || list_size(&child->wait_sema.waiters) != 0)
+		return TID_ERROR;
+
+	// 값이 0인 child.wait_sema를 요구해서 대기
+	// child에서 exit()가 실행되면 child측에서 wait_sema를 +1하여 이하 진행
+	sema_down(&child->wait_sema);
+	// child의 exit_status를 추출하고 child list에서 child 제거 후 child.free_sema up
+	int exit_status = child->exit_status;
+	list_remove(&child->child_elem);
+	sema_up(&child->free_sema);
+	return exit_status;
+}
+
+/// 2-3 Hierarchical Process Structure
+// curr의 child_list를 탐색
+// child_tid와 tid가 같은 원소를 list_entry로 추출해서 thread의 형태로 return
+struct thread *get_child_process(tid_t child_tid)
+{
+	struct thread *curr = thread_current();
+	struct thread *child;
+	struct list *child_list = &curr->child_list;
+	struct list_elem *e = list_begin(child_list);
+	while (e != list_end(child_list))
+	{
+		child = list_entry(e, struct thread, child_elem);
+		if (child->tid == child_tid)
+		{
+			return child; 
+		}
+		e = list_next(e);
+	}
+	return NULL;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
@@ -215,8 +326,28 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
+	/// 2-3
+	// 열려있는 모든 파일을 닫고
+	int fd = 0;
+	while (fd <= curr->rangeof_fd)
+	{
+		close(fd);
+		fd = fd + 1;
+	}
+	// fdtable 전부 free (bitmap_reset)
+	palloc_free_multiple(curr->fdtable, FDT_PAGE_CNT);
+	/// 2-4
+	// 실행중인 파일도 close
+	file_close(curr->running_file);
+	process_cleanup();
 
-	process_cleanup ();
+	/// 2-3 Hierarchical Process Structure
+	// wait_sema를 up
+	// wait_sema down을 대기하던 parent thread가 작업 시작
+	sema_up(&curr->wait_sema);
+	// 값이 0인 free_sema를 요구하여 대기
+	// wait_sema 받은 parent가 작업 종료시 free_sema up, 이를 받아 이하(thread_exit()의 나머지 부분) 진행
+	sema_down(&curr->free_sema);
 }
 
 /* Free the current process's resources. */
@@ -320,6 +451,11 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
  * Stores the executable's entry point into *RIP
  * and its initial stack pointer into *RSP.
  * Returns true if successful, false otherwise. */
+
+/// 2-1
+// 핀토스의 커맨드라인은 128바이트의 리미트
+// args는 공백을 경계로 구분되므로 최대 64개(전부 1char일 경우 64+63)의 arg가 주어질 수 있다
+#define MAX_ARG 64
 static bool
 load (const char *file_name, struct intr_frame *if_) {
 	struct thread *t = thread_current ();
@@ -334,6 +470,25 @@ load (const char *file_name, struct intr_frame *if_) {
 	if (t->pml4 == NULL)
 		goto done;
 	process_activate (thread_current ());
+	/// 2-1
+	// argv 파싱
+	char *argv[MAX_ARG];
+	int argc = 0;
+	char *token, *save_ptr;
+	// 첫 strtok_r 실행에서 token은 실행파일 이름의 첫글자를 포인팅
+	// 이는 while문 개시시 argv[0]에 저장
+	token = strtok_r(file_name, " ", &save_ptr);
+	while (token != NULL)
+	{
+		// 매 strtok_r 실행마다 token은 argc+1 = 1, 2, ...번째 인자의 첫글자를 포인팅
+		// 이는 다음 루프의 시작때 argv[argc]에 저장
+		// 마지막 인자까지 추출 뒤 한번 더 실행된 strtok_r에서는
+		// save_ptr이 file_name의 끝 \0까지 도달해 return NULL로 token 갱신 후 루프 종료
+		ASSERT(argc < MAX_ARG)
+		argv[argc] = token;
+		token = strtok_r(NULL, " ", &save_ptr);
+		argc = argc + 1;
+	}
 
 	/* Open executable file. */
 	file = filesys_open (file_name);
@@ -341,6 +496,10 @@ load (const char *file_name, struct intr_frame *if_) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;
 	}
+	/// 2-4
+	// 실행중인 파일에 대해 쓰기 거부
+	t->running_file = file;
+	file_deny_write(file);
 
 	/* Read and verify executable header. */
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
@@ -416,14 +575,55 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+	argument_stack(argv, argc, if_);
+	// hex_dump(if_->rsp, if_->rsp, USER_STACK - if_->rsp, true); 
 
 	success = true;
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close (file);
+	/// 2-4
+	// file_close (file);
+
 	return success;
 }
+
+/// 2-1
+// 유저 스택에 argv와 각 arg의 P를 저장하고 rsp를 유저 스택의 새 시작점으로 갱신하는 함수
+void argument_stack(char **argv, const int argc, struct intr_frame *if_)
+{
+	uintptr_t rsp = if_->rsp;
+	int i = argc - 1;
+	// rsp를 argv의 크기만큼 후퇴시키면서 생긴 공간에 argv를 저장
+	while (i >= 0)
+	{
+		rsp = rsp - strlen(argv[i]) - 1;
+		memcpy((char *)rsp, argv[i], strlen(argv[i]) + 1);
+		argv[i] = (char *)rsp;
+		i = i - 1;
+	}
+	// argv는 char이므로 argv 저장 후 rsp가 char*의 배수 위치에 있지 않음
+	// rsp를 다시 char*단위의 위치에 두고 1칸의 char*0 패드를 둔 뒤 각 argv의 포인터를 저장
+	size_t PTR_SIZE = sizeof(char *);
+	rsp = rsp - rsp %PTR_SIZE - PTR_SIZE;
+	*(char **)rsp = (char *)0;
+	i = argc - 1;
+	while (i >= 0)
+	{
+		rsp = rsp - PTR_SIZE;
+		*(char **)rsp = argv[i];
+		i = i - 1;
+	}
+	// rsp는 유저 스택의 새 시작점으로 갱신
+	// R.rsi는 argv[0]의 주소
+	// R.rdi는 argv의 개수
+	rsp = rsp - PTR_SIZE;
+	*(char **)rsp = (char *)0;
+	if_->rsp = rsp;
+	if_->R.rdi = argc;
+	if_->R.rsi = rsp + PTR_SIZE;
+}
+
 
 
 /* Checks whether PHDR describes a valid, loadable segment in

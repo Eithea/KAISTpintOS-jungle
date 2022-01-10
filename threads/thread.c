@@ -128,6 +128,17 @@ thread_create (const char *name, int priority,
 	init_thread (t, name, priority);
 	tid = t->tid = allocate_tid ();
 
+	/// 2-3
+	// 새로 create된 스레드를 curr의 자식으로 등록
+	list_push_back(&thread_current()->child_list, &t->child_elem);
+	// fdtable의 기본값은 [stdin, stdout]
+	// 0, 1의 2개니까 range는 1, 다음에 fd를 삽입할 next order는 2
+	t->fdtable = (struct file**) palloc_get_multiple(PAL_ZERO, FDT_PAGE_CNT);
+	t->fdtable[0] = 0;
+	t->fdtable[1] = 1;
+	t->rangeof_fd = 1;
+	t->next_fd = 2;
+
 	t->tf.rip = (uintptr_t) kernel_thread;
 	t->tf.R.rdi = (uint64_t) function;
 	t->tf.R.rsi = (uint64_t) aux;
@@ -542,6 +553,15 @@ init_thread (struct thread *t, const char *name, int priority) {
 	/// 1-4
 	t->nice = NICE_DEFAULT;
  	t->recent_cpu = RECENT_CPU_DEFAULT;
+
+	/// 2-3
+	list_init(&t->child_list);
+	sema_init(&t->wait_sema, 0);
+	sema_init(&t->free_sema, 0);
+	sema_init(&t->fork_sema, 0);
+	
+	t->running_file = NULL;
+
 }
 
 static struct thread *

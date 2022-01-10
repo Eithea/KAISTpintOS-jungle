@@ -10,4 +10,10 @@ int process_wait (tid_t);
 void process_exit (void);
 void process_activate (struct thread *next);
 
+/// 2-1
+void argument_stack(char **argv, const int argc, struct intr_frame *_if);
+
+/// 2-3 Hierarchical Process Structure
+struct thread *get_child_process(tid_t child_tid);
+
 #endif /* userprog/process.h */

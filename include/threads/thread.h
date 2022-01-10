@@ -30,6 +30,12 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
+/// 2-3 File Descriptor
+#define FDT_PAGE_CNT 3
+// 최대 2^12/8byte = 512개
+#define FD_MAX FDT_PAGE_CNT *(512)
+
+
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -122,6 +128,22 @@ struct thread {
 	int nice;
   	int recent_cpu;
 
+	/// 2-3 Hierarchical Process Structure
+	int exit_status;
+	struct list child_list;
+	struct list_elem child_elem;
+	struct semaphore wait_sema;
+	struct semaphore free_sema;
+	struct semaphore fork_sema;
+	struct intr_frame parent_if;
+
+	/// 2-3 File Descriptor
+	struct file** fdtable;
+	int rangeof_fd;
+	int next_fd;
+
+	/// 2-4
+	struct file* running_file;
 };
 
 /* If false (default), use round-robin scheduler.
