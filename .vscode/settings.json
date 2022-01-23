@@ -15,6 +15,7 @@
         "exception": "c",
         "iosfwd": "c",
         "new": "c",
-        "streambuf": "c"
+        "streambuf": "c",
+        "vm.h": "c"
     }
 }

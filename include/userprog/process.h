@@ -16,4 +16,12 @@ void argument_stack(char **argv, const int argc, struct intr_frame *_if);
 /// 2-3 Hierarchical Process Structure
 struct thread *get_child_process(tid_t child_tid);
 
+/// 3-2
+struct lazy_load_info
+{
+    struct file *file;
+    off_t ofs;
+    size_t page_read_bytes;
+};
+
 #endif /* userprog/process.h */
